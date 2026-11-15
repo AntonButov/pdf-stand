@@ -1,0 +1,124 @@
+{
+  "pass": [
+    {
+      "id": "01",
+      "file": "01_simple.pdf",
+      "expect": "pass",
+      "min_tables": 1
+    },
+    {
+      "id": "02",
+      "file": "02_two_tables.pdf",
+      "expect": "pass",
+      "min_tables": 1
+    },
+    {
+      "id": "03",
+      "file": "03_wide.pdf",
+      "expect": "pass",
+      "min_tables": 1
+    },
+    {
+      "id": "04",
+      "file": "04_tall.pdf",
+      "expect": "pass",
+      "min_tables": 1
+    },
+    {
+      "id": "05",
+      "file": "05_russian.pdf",
+      "expect": "pass",
+      "min_tables": 1
+    },
+    {
+      "id": "06",
+      "file": "06_numbers.pdf",
+      "expect": "pass",
+      "min_tables": 1
+    },
+    {
+      "id": "07",
+      "file": "07_empty_cells.pdf",
+      "expect": "pass",
+      "min_tables": 1
+    },
+    {
+      "id": "08",
+      "file": "08_invoice.pdf",
+      "expect": "pass",
+      "min_tables": 1
+    },
+    {
+      "id": "09",
+      "file": "09_dates.pdf",
+      "expect": "pass",
+      "min_tables": 1
+    },
+    {
+      "id": "10",
+      "file": "10_styled_header.pdf",
+      "expect": "pass",
+      "min_tables": 1
+    },
+    {
+      "id": "11",
+      "file": "11_cities.pdf",
+      "expect": "pass",
+      "min_tables": 1
+    },
+    {
+      "id": "12",
+      "file": "12_links_like.pdf",
+      "expect": "pass",
+      "min_tables": 1
+    },
+    {
+      "id": "13",
+      "file": "13_mixed.pdf",
+      "expect": "pass",
+      "min_tables": 1
+    },
+    {
+      "id": "14",
+      "file": "14_single_row.pdf",
+      "expect": "pass",
+      "min_tables": 1
+    },
+    {
+      "id": "15",
+      "file": "15_inventory.pdf",
+      "expect": "pass",
+      "min_tables": 1
+    },
+    {
+      "id": "16",
+      "file": "16_multipage.pdf",
+      "expect": "pass",
+      "min_tables": 1
+    },
+    {
+      "id": "17",
+      "file": "17_budget.pdf",
+      "expect": "pass",
+      "min_tables": 1
+    },
+    {
+      "id": "18",
+      "file": "18_employees.pdf",
+      "expect": "pass",
+      "min_tables": 1
+    },
+    {
+      "id": "19",
+      "file": "19_metrics.pdf",
+      "expect": "pass",
+      "min_tables": 1
+    },
+    {
+      "id": "20",
+      "file": "20_orders.pdf",
+      "expect": "pass",
+      "min_tables": 1
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+services:
+  pdf-stand:
+    build: .
+    ports:
+      - "8131:8080"
+    restart: unless-stopped
