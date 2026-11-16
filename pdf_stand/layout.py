@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import io
 import math
 import re
 from collections import Counter
@@ -207,6 +209,53 @@ def build_grid(
     }
 
 
+def extract_page_images(page: Any) -> list[dict[str, Any]]:
+    """Decode page.images to PNG base64 with PDF-point bounding boxes."""
+    from PIL import Image
+
+    images: list[dict[str, Any]] = []
+    for image in page.images or []:
+        stream = image.get("stream")
+        if stream is None:
+            continue
+        try:
+            raw = stream.get_data()
+        except Exception:  # noqa: BLE001
+            continue
+        srcsize = image.get("srcsize") or (image.get("width"), image.get("height"))
+        if not srcsize or len(srcsize) != 2:
+            continue
+        width_px, height_px = int(srcsize[0]), int(srcsize[1])
+        if width_px <= 0 or height_px <= 0:
+            continue
+        try:
+            if len(raw) == width_px * height_px * 3:
+                pil = Image.frombytes("RGB", (width_px, height_px), raw)
+            elif len(raw) == width_px * height_px:
+                pil = Image.frombytes("L", (width_px, height_px), raw).convert("RGB")
+            else:
+                pil = Image.open(io.BytesIO(raw)).convert("RGB")
+        except Exception:  # noqa: BLE001
+            continue
+        buf = io.BytesIO()
+        pil.save(buf, format="PNG")
+        x0 = float(image.get("x0", 0))
+        top = float(image.get("top", 0))
+        x1 = float(image.get("x1", x0))
+        bottom = float(image.get("bottom", top))
+        images.append(
+            {
+                "x_pt": round(x0, 2),
+                "y_pt": round(top, 2),
+                "width_pt": round(x1 - x0, 2),
+                "height_pt": round(bottom - top, 2),
+                "mime": "image/png",
+                "data_b64": base64.b64encode(buf.getvalue()).decode("ascii"),
+            }
+        )
+    return images
+
+
 def sheet_from_page(page: Any, tables: list[Any]) -> dict[str, Any] | None:
     chars = list(page.chars or [])
     boxes: list[tuple[tuple[float, float, float, float], str, dict[str, Any] | None]] = []
@@ -226,7 +275,25 @@ def sheet_from_page(page: Any, tables: list[Any]) -> dict[str, Any] | None:
                     style = None
                 if text:
                     boxes.append((box, text, style))
+    images = extract_page_images(page)
     grid = build_grid(boxes)
-    if not grid["rows"]:
+    if not grid["rows"] and not images:
         return None
+    if not grid["rows"]:
+        # Image-only page: still emit a sheet so images can be placed.
+        grid = {
+            "rows": [[None]],
+            "col_widths_pt": [float(page.width)],
+            "row_heights_pt": [float(page.height)],
+            "merges": [],
+            "cell_styles": [[None]],
+        }
+    grid["images"] = images
+    # Origin of the glued grid in page coordinates (top-left of first cell band).
+    if boxes:
+        grid["origin_x_pt"] = round(min(box[0] for box, _, _ in boxes), 2)
+        grid["origin_y_pt"] = round(min(box[1] for box, _, _ in boxes), 2)
+    else:
+        grid["origin_x_pt"] = 0.0
+        grid["origin_y_pt"] = 0.0
     return grid

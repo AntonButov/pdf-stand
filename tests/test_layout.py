@@ -1,4 +1,7 @@
+from pathlib import Path
+
 from pdf_stand.layout import build_grid, font_family, snap_font_size, style_from_chars
+from pdf_stand.pipeline import parse_file
 
 
 def test_font_size_matches_reference_rounding():
@@ -47,3 +50,23 @@ def test_equal_padding_is_center_and_top_hugging_text_is_top():
     assert goods["size"] == 6.5
     assert goods["bold"] is True
     assert goods["font"] == "Arial"
+
+
+def test_invoice_sheets_include_page_images():
+    src = Path.home() / "Downloads/pdfexel-2026-11-16/счет Резиденция детства 05.11 (1).pdf"
+    if not src.exists():
+        return
+    result = parse_file(src)
+    assert result.ok
+    assert len(result.sheets) >= 2
+    imgs0 = result.sheets[0].get("images") or []
+    imgs1 = result.sheets[1].get("images") or []
+    assert len(imgs0) == 2
+    assert len(imgs1) == 1
+    logo, qr = imgs0
+    assert abs(logo["width_pt"] - 184.44) < 1
+    assert abs(logo["height_pt"] - 36.72) < 1
+    assert abs(qr["width_pt"] - 97.56) < 1
+    assert abs(qr["height_pt"] - 97.56) < 1
+    assert logo["mime"] == "image/png"
+    assert len(logo["data_b64"]) > 100
