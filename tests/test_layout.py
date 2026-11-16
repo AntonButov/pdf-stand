@@ -70,3 +70,22 @@ def test_invoice_sheets_include_page_images():
     assert abs(qr["height_pt"] - 97.56) < 1
     assert logo["mime"] == "image/png"
     assert len(logo["data_b64"]) > 100
+
+
+def test_invoice_sheet_keeps_title_and_parties():
+    src = Path.home() / "Downloads/pdfexel-2026-11-16/счет Резиденция детства 05.11 (1).pdf"
+    if not src.exists():
+        return
+    result = parse_file(src)
+    assert result.ok
+    blob = "\n".join(
+        "" if cell is None else str(cell)
+        for row in (result.sheets[0].get("rows") or [])
+        for cell in row
+    )
+    # Title chars are tightly kerned in this PDF ("Счетнаоплату…").
+    assert "Счет" in blob and ("оплату" in blob or "оплат" in blob)
+    assert "ЦБ-4328" in blob
+    assert "Поставщик" in blob
+    assert "Покупатель" in blob
+    assert "РЕЗИДЕНЦИЯ" in blob

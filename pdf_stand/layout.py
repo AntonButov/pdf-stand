@@ -256,9 +256,69 @@ def extract_page_images(page: Any) -> list[dict[str, Any]]:
     return images
 
 
+def _char_covered(
+    char: dict[str, Any],
+    covered: list[tuple[float, float, float, float]],
+) -> bool:
+    mid_x = (char["x0"] + char["x1"]) / 2
+    mid_y = (char["top"] + char["bottom"]) / 2
+    for x0, top, x1, bottom in covered:
+        if x0 - 0.5 <= mid_x < x1 + 0.5 and top - 0.5 <= mid_y < bottom + 0.5:
+            return True
+    return False
+
+
+def loose_text_boxes(
+    chars: list[dict[str, Any]],
+    covered: list[tuple[float, float, float, float]],
+) -> list[tuple[tuple[float, float, float, float], str, dict[str, Any] | None]]:
+    """Turn free-floating chars (title, supplier/buyer) into grid boxes."""
+    free = [char for char in chars if (char.get("text") or "").strip() and not _char_covered(char, covered)]
+    if not free:
+        return []
+    ordered = sorted(free, key=lambda char: (round(char["top"], 1), char["x0"]))
+    lines: list[list[dict[str, Any]]] = []
+    current_top: float | None = None
+    for char in ordered:
+        if current_top is None or abs(char["top"] - current_top) > 1.6:
+            lines.append([char])
+            current_top = float(char["top"])
+        else:
+            lines[-1].append(char)
+
+    boxes: list[tuple[tuple[float, float, float, float], str, dict[str, Any] | None]] = []
+    for line in lines:
+        line = sorted(line, key=lambda char: char["x0"])
+        # Split a line into runs when a large horizontal gap appears (two labels).
+        runs: list[list[dict[str, Any]]] = [[line[0]]]
+        for char in line[1:]:
+            prev = runs[-1][-1]
+            gap = char["x0"] - prev["x1"]
+            if gap > max(float(prev.get("size", 6)) * 1.8, 8.0):
+                runs.append([char])
+            else:
+                runs[-1].append(char)
+        for run in runs:
+            text = text_from_chars(run)
+            if not text:
+                continue
+            box = (
+                float(min(c["x0"] for c in run)),
+                float(min(c["top"] for c in run)),
+                float(max(c["x1"] for c in run)),
+                float(max(c["bottom"] for c in run)),
+            )
+            # Pad a little so the grid band matches visual line height.
+            pad = max(0.5, float(run[0].get("size", 8)) * 0.15)
+            padded = (box[0], box[1] - pad, box[2], box[3] + pad)
+            boxes.append((padded, text, style_from_chars(run, padded)))
+    return boxes
+
+
 def sheet_from_page(page: Any, tables: list[Any]) -> dict[str, Any] | None:
     chars = list(page.chars or [])
     boxes: list[tuple[tuple[float, float, float, float], str, dict[str, Any] | None]] = []
+    covered: list[tuple[float, float, float, float]] = []
     for table in tables:
         extracted = table.extract() or []
         for row_obj, row_text in zip(table.rows, extracted):
@@ -266,6 +326,7 @@ def sheet_from_page(page: Any, tables: list[Any]) -> dict[str, Any] | None:
                 if bbox is None:
                     continue
                 box = (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))
+                covered.append(box)
                 cell_chars = _chars_in_box(chars, box)
                 if cell_chars:
                     text = text_from_chars(cell_chars)
@@ -275,6 +336,7 @@ def sheet_from_page(page: Any, tables: list[Any]) -> dict[str, Any] | None:
                     style = None
                 if text:
                     boxes.append((box, text, style))
+    boxes.extend(loose_text_boxes(chars, covered))
     images = extract_page_images(page)
     grid = build_grid(boxes)
     if not grid["rows"] and not images:
