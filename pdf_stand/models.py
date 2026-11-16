@@ -17,9 +17,16 @@ class ParseError:
 class TableResult:
     page: int
     rows: list[list[str | None]]
+    col_widths_pt: list[float] = field(default_factory=list)
+    row_heights_pt: list[float] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
-        return {"page": self.page, "rows": self.rows}
+        return {
+            "page": self.page,
+            "rows": self.rows,
+            "col_widths_pt": self.col_widths_pt,
+            "row_heights_pt": self.row_heights_pt,
+        }
 
 
 @dataclass
@@ -29,12 +36,14 @@ class ParseResult:
     tables: list[TableResult] = field(default_factory=list)
     errors: list[ParseError] = field(default_factory=list)
     engine: dict[str, str | None] = field(default_factory=dict)
+    sheets: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "ok": self.ok,
             "pages": self.pages,
             "tables": [t.to_dict() for t in self.tables],
+            "sheets": self.sheets,
             "errors": [e.to_dict() for e in self.errors],
             "engine": self.engine,
         }
