@@ -6,6 +6,7 @@ import pdfplumber
 
 from pdf_stand.layout import sheet_from_page
 from pdf_stand.models import ParseError, ParseResult, TableResult
+from pdf_stand.scan import detect_scanned_pdf
 
 
 def _cell(value: object) -> str | None:
@@ -60,9 +61,12 @@ def parse_file(path: Path | str) -> ParseResult:
 
     tables: list[TableResult] = []
     sheets: list[dict] = []
+    scanned = False
+    pages = 0
     try:
         with pdfplumber.open(source) as pdf:
             pages = len(pdf.pages)
+            scanned = detect_scanned_pdf(pdf)
             for index, page in enumerate(pdf.pages, start=1):
                 found_tables = page.find_tables() or []
                 sheet = sheet_from_page(page, found_tables)
@@ -96,13 +100,37 @@ def parse_file(path: Path | str) -> ParseResult:
         )
 
     if not tables:
+        if scanned:
+            return ParseResult(
+                ok=False,
+                pages=pages,
+                tables=[],
+                sheets=sheets,
+                scanned=True,
+                errors=[
+                    ParseError(
+                        "scanned_pdf",
+                        "PDF выглядит как скан — нужен OCR",
+                    )
+                ],
+                engine=engine,
+            )
         return ParseResult(
             ok=False,
-            pages=pages if "pages" in locals() else 0,
+            pages=pages,
             tables=[],
             sheets=sheets,
+            scanned=False,
             errors=[ParseError("no_tables", "no tables extracted")],
             engine=engine,
         )
 
-    return ParseResult(ok=True, pages=pages, tables=tables, sheets=sheets, errors=[], engine=engine)
+    return ParseResult(
+        ok=True,
+        pages=pages,
+        tables=tables,
+        sheets=sheets,
+        scanned=scanned,
+        errors=[],
+        engine=engine,
+    )

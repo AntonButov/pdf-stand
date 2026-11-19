@@ -37,6 +37,7 @@ class ParseResult:
     errors: list[ParseError] = field(default_factory=list)
     engine: dict[str, str | None] = field(default_factory=dict)
     sheets: list[dict[str, Any]] = field(default_factory=list)
+    scanned: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -46,6 +47,7 @@ class ParseResult:
             "sheets": self.sheets,
             "errors": [e.to_dict() for e in self.errors],
             "engine": self.engine,
+            "scanned": self.scanned,
         }
 
     def stable_tables(self) -> list[dict[str, Any]]:
