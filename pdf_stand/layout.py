@@ -209,8 +209,141 @@ def build_grid(
     }
 
 
+def _decode_rgb_image(raw: bytes, width_px: int, height_px: int) -> Any:
+    from PIL import Image
+
+    if len(raw) == width_px * height_px * 3:
+        return Image.frombytes("RGB", (width_px, height_px), raw)
+    if len(raw) == width_px * height_px:
+        return Image.frombytes("L", (width_px, height_px), raw).convert("RGB")
+    return Image.open(io.BytesIO(raw)).convert("RGB")
+
+
+def _mask_from_bits(raw: bytes, width: int, height: int, bits: int) -> Any:
+    """Decode a DeviceGray soft-mask bitstream into an 8-bit L image."""
+    from PIL import Image
+
+    if bits == 8 and len(raw) >= width * height:
+        return Image.frombytes("L", (width, height), raw[: width * height])
+    if bits == 1:
+        # Row stride is byte-aligned.
+        row_bytes = (width + 7) // 8
+        pixels = bytearray(width * height)
+        for y in range(height):
+            row = raw[y * row_bytes : (y + 1) * row_bytes]
+            for x in range(width):
+                byte = row[x // 8]
+                bit = (byte >> (7 - (x % 8))) & 1
+                pixels[y * width + x] = 255 if bit else 0
+        return Image.frombytes("L", (width, height), bytes(pixels))
+    if bits in (2, 4):
+        pixels_per_byte = 8 // bits
+        row_bytes = (width + pixels_per_byte - 1) // pixels_per_byte
+        max_val = (1 << bits) - 1
+        pixels = bytearray(width * height)
+        for y in range(height):
+            row = raw[y * row_bytes : (y + 1) * row_bytes]
+            for x in range(width):
+                byte = row[x // pixels_per_byte]
+                shift = bits * (pixels_per_byte - 1 - (x % pixels_per_byte))
+                val = (byte >> shift) & max_val
+                pixels[y * width + x] = int(round(val * 255 / max_val))
+        return Image.frombytes("L", (width, height), bytes(pixels))
+    return Image.open(io.BytesIO(raw)).convert("L")
+
+
+def _decode_soft_mask(stream: Any, width_px: int, height_px: int) -> Any | None:
+    """Load PDF SMask as an L-mode alpha channel sized to the color image."""
+    from pdfminer.pdftypes import resolve1
+    from PIL import Image
+
+    try:
+        attrs = getattr(stream, "attrs", None) or {}
+        smask_ref = attrs.get("SMask")
+        if smask_ref is None:
+            return None
+        smask = resolve1(smask_ref)
+        if smask is None:
+            return None
+        raw = smask.get_data()
+        smask_attrs = getattr(smask, "attrs", None) or {}
+        mw = int(smask_attrs.get("Width") or width_px)
+        mh = int(smask_attrs.get("Height") or height_px)
+        bits = int(smask_attrs.get("BitsPerComponent") or 8)
+        if mw <= 0 or mh <= 0:
+            return None
+        mask = _mask_from_bits(raw, mw, mh, bits)
+        if mask.size != (width_px, height_px):
+            mask = mask.resize((width_px, height_px), Image.Resampling.BILINEAR)
+        return mask
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _composite_smask_on_white(rgb: Any, mask: Any, matte: list[float] | None = None) -> Any:
+    """Apply soft-mask alpha and flatten onto white (fixes black stamp/signature boxes).
+
+    - No Matte: colour is straight (non-premultiplied) → PIL paste over white.
+    - Black Matte [0,0,0]: samples are premultiplied into black → `out = c' + white*(1-α)`.
+    - Other Matte: recover straight colour, then paste over white.
+    """
+    from PIL import Image, ImageChops
+
+    rgb = rgb.convert("RGB")
+    mask = mask.convert("L")
+    if mask.size != rgb.size:
+        mask = mask.resize(rgb.size, Image.Resampling.BILINEAR)
+
+    if matte is None:
+        rgba = rgb.convert("RGBA")
+        rgba.putalpha(mask)
+        bg = Image.new("RGB", rgb.size, (255, 255, 255))
+        bg.paste(rgba, mask=mask)
+        return bg
+
+    scale = 255.0 if max(float(x) for x in matte[:3]) <= 1.0 else 1.0
+    matte_rgb = (float(matte[0]) * scale, float(matte[1]) * scale, float(matte[2]) * scale)
+    if matte_rgb == (0.0, 0.0, 0.0):
+        # Premultiplied against black: add residual white through the inverse mask.
+        inv = ImageChops.invert(mask)
+        white_through = Image.merge("RGB", (inv, inv, inv))
+        return ImageChops.add(rgb, white_through)
+
+    # Rare non-black matte: un-premultiply then paste.
+    src = rgb.load()
+    alpha_px = mask.load()
+    straight = Image.new("RGB", rgb.size)
+    dst = straight.load()
+    width, height = rgb.size
+    for y in range(height):
+        for x in range(width):
+            a = alpha_px[x, y] / 255.0
+            r, g, b = (float(v) for v in src[x, y])
+            if a <= 1e-6:
+                dst[x, y] = (0, 0, 0)
+                continue
+            if a < 1.0:
+                r = (r - matte_rgb[0] * (1.0 - a)) / a
+                g = (g - matte_rgb[1] * (1.0 - a)) / a
+                b = (b - matte_rgb[2] * (1.0 - a)) / a
+            dst[x, y] = (
+                int(round(max(0.0, min(255.0, r)))),
+                int(round(max(0.0, min(255.0, g)))),
+                int(round(max(0.0, min(255.0, b)))),
+            )
+    rgba = straight.convert("RGBA")
+    rgba.putalpha(mask)
+    bg = Image.new("RGB", rgb.size, (255, 255, 255))
+    bg.paste(rgba, mask=mask)
+    return bg
+
+
 def extract_page_images(page: Any) -> list[dict[str, Any]]:
-    """Decode page.images to PNG base64 with PDF-point bounding boxes."""
+    """Decode page.images to PNG base64 with PDF-point bounding boxes.
+
+    Soft masks (SMask) on stamps/signatures are applied and flattened onto white
+    so Excel does not show a black rectangle behind the ink.
+    """
     from PIL import Image
 
     images: list[dict[str, Any]] = []
@@ -229,14 +362,25 @@ def extract_page_images(page: Any) -> list[dict[str, Any]]:
         if width_px <= 0 or height_px <= 0:
             continue
         try:
-            if len(raw) == width_px * height_px * 3:
-                pil = Image.frombytes("RGB", (width_px, height_px), raw)
-            elif len(raw) == width_px * height_px:
-                pil = Image.frombytes("L", (width_px, height_px), raw).convert("RGB")
-            else:
-                pil = Image.open(io.BytesIO(raw)).convert("RGB")
+            pil = _decode_rgb_image(raw, width_px, height_px)
         except Exception:  # noqa: BLE001
             continue
+        mask = _decode_soft_mask(stream, width_px, height_px)
+        if mask is not None:
+            attrs = getattr(stream, "attrs", None) or {}
+            matte = attrs.get("Matte")
+            if matte is not None:
+                try:
+                    matte = [float(x) for x in matte]
+                except (TypeError, ValueError):
+                    matte = None
+            pil = _composite_smask_on_white(pil, mask, matte)
+        elif pil.mode == "RGBA":
+            bg = Image.new("RGB", pil.size, (255, 255, 255))
+            bg.paste(pil, mask=pil.split()[3])
+            pil = bg
+        else:
+            pil = pil.convert("RGB")
         buf = io.BytesIO()
         pil.save(buf, format="PNG")
         x0 = float(image.get("x0", 0))
